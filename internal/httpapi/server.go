@@ -12,17 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/murmyauuu/template/api"
 	"github.com/murmyauuu/template/internal/config"
+	"github.com/murmyauuu/template/internal/trip"
 )
 
 type handler struct {
-	api.Unimplemented
 	pool         *pgxpool.Pool
+	trips        *trip.Service
 	queryTimeout time.Duration
 	logger       *slog.Logger
 }
 
-func New(cfg config.HTTP, pool *pgxpool.Pool, queryTimeout time.Duration, logger *slog.Logger) *http.Server {
-	h := &handler{pool: pool, queryTimeout: queryTimeout, logger: logger}
+func New(cfg config.HTTP, pool *pgxpool.Pool, trips *trip.Service, queryTimeout time.Duration, logger *slog.Logger) *http.Server {
+	h := &handler{pool: pool, trips: trips, queryTimeout: queryTimeout, logger: logger}
 	router := api.HandlerWithOptions(h, api.ChiServerOptions{
 		BaseRouter: chi.NewRouter(),
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {

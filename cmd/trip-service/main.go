@@ -14,6 +14,7 @@ import (
 	"github.com/murmyauuu/template/internal/config"
 	"github.com/murmyauuu/template/internal/database"
 	"github.com/murmyauuu/template/internal/httpapi"
+	"github.com/murmyauuu/template/internal/trip"
 )
 
 func main() {
@@ -38,7 +39,12 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	server := httpapi.New(cfg.HTTP, pool, cfg.Database.QueryTimeout, logger)
+	trips := trip.NewService(
+		trip.NewRepository(pool, cfg.Database.QueryTimeout),
+		trip.NewHistoryRepository(pool, cfg.Database.QueryTimeout),
+		database.NewTxManager(pool, cfg.Database.QueryTimeout),
+	)
+	server := httpapi.New(cfg.HTTP, pool, trips, cfg.Database.QueryTimeout, logger)
 	serverErrors := make(chan error, 1)
 	go func() {
 		serverErrors <- server.ListenAndServe()
