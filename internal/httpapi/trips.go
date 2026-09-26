@@ -23,13 +23,17 @@ func (h *handler) CreateTrip(w http.ResponseWriter, r *http.Request, params api.
 		h.problem(r.Context(), w, r.URL.Path, http.StatusBadRequest, "invalid_request", "Invalid request", "Request body is invalid")
 		return
 	}
-	created, err := h.trips.Create(r.Context(), data)
+	created, fresh, err := h.trips.Create(r.Context(), data, params.IdempotencyKey)
 	if err != nil {
 		h.tripError(r.Context(), w, r.URL.Path, err)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/trips/"+created.Id.String())
-	h.writeJSON(r.Context(), w, http.StatusCreated, "application/json", created)
+	status := http.StatusCreated
+	if !fresh {
+		status = http.StatusOK
+	}
+	h.writeJSON(r.Context(), w, status, "application/json", created)
 }
 
 func (h *handler) GetTrip(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
@@ -118,6 +122,8 @@ func (h *handler) tripError(ctx context.Context, w http.ResponseWriter, instance
 		h.problem(ctx, w, instance, http.StatusNotFound, "trip_not_found", "Trip not found", "Trip was not found")
 	case errors.Is(err, trip.ErrTripCompleted):
 		h.problem(ctx, w, instance, http.StatusConflict, "trip_completed", "Trip completed", "Operation is not allowed for a completed trip")
+	case errors.Is(err, trip.ErrIdempotencyConflict):
+		h.problem(ctx, w, instance, http.StatusConflict, "idempotency_conflict", "Idempotency conflict", "Idempotency key was already used with different request data")
 	default:
 		h.logger.ErrorContext(ctx, "trip operation failed", "path", instance, "error", err)
 		h.problem(ctx, w, instance, http.StatusInternalServerError, "internal_error", "Internal server error", "Unable to process the request")

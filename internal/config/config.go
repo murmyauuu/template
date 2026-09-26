@@ -16,6 +16,7 @@ type Config struct {
 	Database        Database
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
+	IdempotencyTTL  time.Duration
 }
 
 type HTTP struct {
@@ -82,6 +83,7 @@ func Load() (Config, error) {
 		{"DATABASE_MAX_CONN_LIFETIME", &cfg.Database.MaxConnLifetime},
 		{"DATABASE_CONNECT_TIMEOUT", &cfg.Database.ConnectTimeout},
 		{"DATABASE_QUERY_TIMEOUT", &cfg.Database.QueryTimeout},
+		{"IDEMPOTENCY_TTL", &cfg.IdempotencyTTL},
 	} {
 		value, err := required(setting.name)
 		if err != nil {

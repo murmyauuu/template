@@ -2,6 +2,8 @@ package trip
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -14,38 +16,68 @@ type TxManager interface {
 }
 
 type Service struct {
-	repository *Repository
-	history    *HistoryRepository
-	txManager  TxManager
+	repository     *Repository
+	history        *HistoryRepository
+	txManager      TxManager
+	idempotency    *IdempotencyRepository
+	idempotencyTTL time.Duration
 }
 
-func NewService(repository *Repository, history *HistoryRepository, txManager TxManager) *Service {
-	return &Service{repository: repository, history: history, txManager: txManager}
+func NewService(repository *Repository, history *HistoryRepository, txManager TxManager, idempotency *IdempotencyRepository, ttl time.Duration) *Service {
+	return &Service{repository: repository, history: history, txManager: txManager, idempotency: idempotency, idempotencyTTL: ttl}
 }
 
-func (s *Service) Create(ctx context.Context, data api.TripData) (api.Trip, error) {
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return api.Trip{}, fmt.Errorf("generate trip ID: %w", err)
-	}
-	value := api.Trip{
-		Id: id, UserId: data.UserId, DriverId: data.DriverId,
-		StartPoint: data.StartPoint, EndPoint: data.EndPoint, Price: data.Price,
-		Status: api.Active, StartedAt: time.Now().UTC().Truncate(time.Microsecond),
+func (s *Service) Create(ctx context.Context, data api.TripData, key *uuid.UUID) (api.Trip, bool, error) {
+	var hash [sha256.Size]byte
+	if key != nil {
+		body, err := json.Marshal(data)
+		if err != nil {
+			return api.Trip{}, false, fmt.Errorf("encode idempotency request: %w", err)
+		}
+		hash = sha256.Sum256(body)
 	}
 	var created api.Trip
-	err = s.txManager.Do(ctx, func(ctx context.Context) error {
-		var err error
+	fresh := true
+	err := s.txManager.Do(ctx, func(ctx context.Context) error {
+		if key != nil {
+			var err error
+			fresh, err = s.idempotency.Claim(ctx, *key, hash[:], time.Now().UTC().Add(s.idempotencyTTL))
+			if err != nil {
+				return err
+			}
+			if err := s.idempotency.Prune(ctx, *key); err != nil {
+				return err
+			}
+			if !fresh {
+				created, err = s.idempotency.Replay(ctx, *key, hash[:])
+				return err
+			}
+		}
+		id, err := uuid.NewRandom()
+		if err != nil {
+			return fmt.Errorf("generate trip ID: %w", err)
+		}
+		value := api.Trip{
+			Id: id, UserId: data.UserId, DriverId: data.DriverId,
+			StartPoint: data.StartPoint, EndPoint: data.EndPoint, Price: data.Price,
+			Status: api.Active, StartedAt: time.Now().UTC().Truncate(time.Microsecond),
+		}
 		created, err = s.repository.Create(ctx, value)
 		if err != nil {
 			return err
 		}
-		return s.history.Append(ctx, created.Id, nil, api.Active, created.StartedAt)
+		if err := s.history.Append(ctx, created.Id, nil, api.Active, created.StartedAt); err != nil {
+			return err
+		}
+		if key != nil {
+			return s.idempotency.Save(ctx, *key, created)
+		}
+		return nil
 	})
 	if err != nil {
-		return api.Trip{}, err
+		return api.Trip{}, false, err
 	}
-	return created, nil
+	return created, fresh, nil
 }
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (api.Trip, error) {

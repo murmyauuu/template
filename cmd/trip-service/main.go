@@ -43,6 +43,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		trip.NewRepository(pool, cfg.Database.QueryTimeout),
 		trip.NewHistoryRepository(pool, cfg.Database.QueryTimeout),
 		database.NewTxManager(pool, cfg.Database.QueryTimeout),
+		trip.NewIdempotencyRepository(pool, cfg.Database.QueryTimeout),
+		cfg.IdempotencyTTL,
 	)
 	server := httpapi.New(cfg.HTTP, pool, trips, cfg.Database.QueryTimeout, logger)
 	serverErrors := make(chan error, 1)
