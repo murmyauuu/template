@@ -46,10 +46,24 @@ func (m *TxManager) Do(ctx context.Context, fn func(context.Context) error) (err
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() {
-		// Очистка должна сработать и после отмены контекста запроса.
+		// recover перехватывает панику fn, чтобы сначала откатить транзакцию.
+		p := recover()
+		// Откат вызывается всегда: при ошибке fn, при панике и при выходе через
+		// runtime.Goexit. После Commit pgx вернёт ErrTxClosed, его игнорируем.
+		// Контекст без отмены нужен, чтобы откат сработал и после отмены запроса.
 		rollbackCtx, stop := context.WithTimeout(context.WithoutCancel(txCtx), m.timeout)
 		defer stop()
-		if rollbackErr := tx.Rollback(rollbackCtx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+		rollbackErr := tx.Rollback(rollbackCtx)
+		if errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			rollbackErr = nil
+		}
+		if p != nil {
+			// Паника — баг, её нельзя превращать в обычную ошибку: пробрасываем
+			// исходное значение дальше. Ошибку отката вернуть некуда; при сбое
+			// отката pgx закрывает соединение, и PostgreSQL сам прерывает транзакцию.
+			panic(p)
+		}
+		if rollbackErr != nil {
 			err = errors.Join(err, fmt.Errorf("rollback transaction: %w", rollbackErr))
 		}
 	}()
